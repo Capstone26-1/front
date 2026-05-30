@@ -4,15 +4,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { runAgent } from "./api/agent";
 
 const TOOL_REGISTRY = [
-  { name: "live_arrival_tool", desc: "실시간 도착 정보" },
-  { name: "last_transport_time_tool", desc: "막차 시간 / 경로 옵션" },
-  { name: "weather_tool", desc: "강수 · 강설 · 기온" },
-  { name: "traffic_incident_tool", desc: "사고 · 공사 · 통제" },
-  { name: "risk_score_tool", desc: "위험 점수 + Anomaly Type" },
-  { name: "alternative_route_tool", desc: "대체 경로" },
-  { name: "route_search_tool", desc: "경로 후보 일반 검색" },
-  { name: "bus_location_tool", desc: "차량 위치" },
-  { name: "explanation_tool", desc: "최종 자연어 설명" },
+  { name: "search_location",         desc: "장소명 → 위경도 좌표 (Kakao)" },
+  { name: "search_transit_route",    desc: "대중교통 경로 탐색 (Tmap)" },
+  { name: "weather_alert_tool",      desc: "기상 특보 · 강수 위험도 (기상청)" },
+  { name: "road_incident_tool",      desc: "도로 돌발상황 · 통제 (국토부 ITS)" },
+  { name: "transit_disruption_tool", desc: "지하철 실시간 지연 · 혼잡 (서울)" },
+  { name: "public_event_tool",       desc: "대형 행사 혼잡 · 관중 (Demo)" },
 ];
 
 const SUGGESTIONS = [
@@ -69,7 +66,7 @@ function Hero({ onSend, onSuggestion }) {
       <div className="text-center">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-400">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          MCP Tool Server 5개 연결됨
+          MCP Tool Server 6개 연결됨
         </div>
         <h1 className="mt-6 text-4xl font-semibold text-slate-100 tracking-tight">
           오늘 막차, 안전하게 탈 수 있을까요?
@@ -259,10 +256,10 @@ function AssistantMessage({ data, onOpenWorkflow }) {
           <span className="text-slate-600">(Goal Manager)</span>
         </div>
         <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-          <ParsedField label="출발지" value={parsed.origin} />
-          <ParsedField label="목적지" value={parsed.destination} />
-          <ParsedField label="시각" value={parsed.time} />
-          <ParsedField label="상황" value={parsed.situation} highlight />
+          <ParsedField label="출발지" value={parsed?.origin} />
+          <ParsedField label="목적지" value={parsed?.destination} />
+          <ParsedField label="시각" value={parsed?.time} />
+          <ParsedField label="상황" value={parsed?.situation} highlight />
         </div>
       </div>
 
