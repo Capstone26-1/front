@@ -1,0 +1,108 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1780123312326,
+  "projectRoot": "/Users/jin/Library/Mobile Documents/com~apple~CloudDocs/Documents/HUFS/4-1_Bachelor/Capstone/Project/FE",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "react",
+        "version": "19.2.6",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "19.2.6",
+        "category": "frontend"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run start",
+    "scripts": {
+      "start": "react-scripts start",
+      "build": "react-scripts build",
+      "test": "react-scripts test",
+      "eject": "react-scripts eject"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "public",
+      "src"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "public": {
+      "path": "public",
+      "purpose": "Public files",
+      "fileCount": 6,
+      "lastAccessed": 1780123312247,
+      "keyFiles": [
+        "favicon.ico",
+        "index.html",
+        "logo192.png",
+        "logo512.png",
+        "manifest.json"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 8,
+      "lastAccessed": 1780123312252,
+      "keyFiles": [
+        "App.css",
+        "App.js",
+        "App.test.js",
+        "index.css",
+        "index.js"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/App.js",
+      "accessCount": 2,
+      "lastAccessed": 1780124525754,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 1,
+      "lastAccessed": 1780123354997,
+      "type": "file"
+    },
+    {
+      "path": "src/index.js",
+      "accessCount": 1,
+      "lastAccessed": 1780125561845,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
