@@ -10,6 +10,7 @@ const TOOL_REGISTRY = [
   { name: "road_incident_tool",      desc: "도로 돌발상황 · 통제 (국토부 ITS)" },
   { name: "transit_disruption_tool", desc: "지하철 실시간 지연 · 혼잡 (서울)" },
   { name: "public_event_tool",       desc: "대형 행사 혼잡 · 관중 (Demo)" },
+  { name: "news_context_tool",       desc: "교통 이슈 원인 뉴스 검색 (네이버)" },
 ];
 
 const SUGGESTIONS = [
@@ -66,7 +67,7 @@ function Hero({ onSend, onSuggestion }) {
       <div className="text-center">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-400">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          MCP Tool Server 6개 연결됨
+          MCP Tool Server 7개 연결됨
         </div>
         <h1 className="mt-6 text-4xl font-semibold text-slate-100 tracking-tight">
           오늘 막차, 안전하게 탈 수 있을까요?

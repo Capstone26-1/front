@@ -77,7 +77,8 @@ async function weatherAlertHandler({ location }) {
   }
 }
 
-async function roadIncidentHandler({ area }) {
+// waypoints: 경로 경유 지역명 배열 (제공 시 area 대신 전체 경로 조회)
+async function roadIncidentHandler({ area, waypoints }) {
   try {
     const params = new URLSearchParams({
       apiKey: process.env.ROAD_INCIDENT_API_KEY,
@@ -91,10 +92,14 @@ async function roadIncidentHandler({ area }) {
     const json = await res.json();
     const items = Array.isArray(json?.items) ? json.items : [];
 
+    const searchAreas =
+      waypoints && waypoints.length > 0 ? waypoints : area ? [area] : [];
+
     const filtered = items
       .filter((item) => {
         const loc = (item.location || item.roadName || "").toString();
-        return loc.includes(area);
+        if (searchAreas.length === 0) return true;
+        return searchAreas.some((a) => loc.includes(a));
       })
       .map((item) => ({
         type: item.inciType || item.type || "unknown",
@@ -196,6 +201,54 @@ function publicEventHandler({ location }) {
   };
 }
 
+async function newsContextHandler({ query }) {
+  try {
+    const res = await fetch(
+      `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}&display=5&sort=date`,
+      {
+        headers: {
+          "X-Naver-Client-Id": process.env.NAVER_CLIENT_ID,
+          "X-Naver-Client-Secret": process.env.NAVER_CLIENT_SECRET,
+        },
+      }
+    );
+    const json = await res.json();
+    const items = json?.items ?? [];
+
+    const headlines = items.map((i) => i.title.replace(/<[^>]+>/g, ""));
+    const fullText = [
+      ...headlines,
+      ...items.map((i) => i.description || ""),
+    ].join(" ");
+
+    const ISSUE_MAP = {
+      날씨: ["폭우", "호우", "태풍", "폭설", "강풍", "기상특보"],
+      도로통제: ["사고", "통제", "차단", "봉쇄", "붕괴", "철거", "공사"],
+      지하철지연: ["지하철", "전철", "지연", "운행중단", "파업"],
+      행사혼잡: ["경기", "콘서트", "공연", "축제", "행사"],
+    };
+
+    const issues = [];
+    for (const [issue, keywords] of Object.entries(ISSUE_MAP)) {
+      if (keywords.some((k) => fullText.includes(k))) issues.push(issue);
+    }
+
+    const summary =
+      headlines.length > 0
+        ? `관련 뉴스 ${headlines.length}건: ${headlines.slice(0, 2).join(" / ")}`
+        : "관련 뉴스 없음";
+
+    return { hasIssue: issues.length > 0, issues, headlines, summary };
+  } catch {
+    return {
+      hasIssue: false,
+      issues: [],
+      headlines: [],
+      summary: "뉴스 조회 실패",
+    };
+  }
+}
+
 export const MCP_TOOLS = [
   {
     name: "weather_alert_tool",
@@ -222,6 +275,12 @@ export const MCP_TOOLS = [
         area: {
           type: "string",
           description: "조회할 도로/지역명 (예: 강남, 한강대교)",
+        },
+        waypoints: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "경로 경유지 지역명 목록 — 제공 시 경로 전체를 조회합니다 (예: ['강남', '반포', '사당'])",
         },
       },
       required: ["area"],
@@ -257,13 +316,31 @@ export const MCP_TOOLS = [
       required: ["location"],
     },
   },
+  {
+    name: "news_context_tool",
+    description:
+      "뉴스 검색으로 교통 이상의 원인을 파악합니다. road_incident_tool에서 사고·통제가 감지되거나 search_transit_route 결과가 비정상(경로 없음·우회)일 때 반드시 호출하세요. 결과의 issues 배열에 따라 추가 도구를 선택하세요: '날씨'→weather_alert_tool, '지하철지연'→transit_disruption_tool, '행사혼잡'→public_event_tool",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "검색 쿼리 (예: '강남 사당 교통 막힘 원인', '2호선 지연 사고')",
+        },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 export async function executeMcpTool(name, input) {
   if (name === "weather_alert_tool") return await weatherAlertHandler(input);
   if (name === "road_incident_tool") return await roadIncidentHandler(input);
-  if (name === "transit_disruption_tool") return await transitDisruptionHandler(input);
+  if (name === "transit_disruption_tool")
+    return await transitDisruptionHandler(input);
   if (name === "public_event_tool") return publicEventHandler(input);
+  if (name === "news_context_tool") return await newsContextHandler(input);
   throw new Error(`알 수 없는 MCP tool: ${name}`);
 }
 
@@ -280,5 +357,9 @@ export function summarizeMcpTool(name, result) {
     return result.hasEvent
       ? `행사: ${result.eventName} (관중 ${result.estimatedCrowd.toLocaleString()}명)`
       : "주변 행사 없음";
+  if (name === "news_context_tool")
+    return result.hasIssue
+      ? `뉴스 이슈 감지 (${result.issues.join(", ")}): ${result.headlines[0] || ""}`
+      : "관련 뉴스 없음";
   return "";
 }
