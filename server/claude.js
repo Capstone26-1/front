@@ -42,9 +42,8 @@ const BASE_TOOLS = [
 const TOOLS = [...BASE_TOOLS, ...MCP_TOOLS];
 
 function getSystemPrompt() {
-  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
-  const pad = (n) => String(n).padStart(2, "0");
-  const timeStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  // sv 로케일은 "YYYY-MM-DD HH:MM:SS" 형식 → KST 기준으로 직접 포맷
+  const timeStr = new Date().toLocaleString("sv", { timeZone: "Asia/Seoul" }).substring(0, 16);
 
   return `당신은 막차 위험 탐지 AI Agent입니다. MCP Tool Server에 연결된 7개의 도구를 상황에 따라 동적으로 선택하여 사용합니다.
 
