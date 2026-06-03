@@ -695,6 +695,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const [liveWorkflow, setLiveWorkflow] = useState([]);
+  const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   const bottomRef = useRef(null);
 
   const lastAssistant = useMemo(
@@ -719,7 +720,7 @@ export default function App() {
     try {
       const result = await runAgent(text, history, (step) => {
         setLiveWorkflow((prev) => [...prev, step]);
-      });
+      }, sessionId);
       if (result) {
         setMessages((prev) => [
           ...prev,
@@ -748,6 +749,7 @@ export default function App() {
     setMessages([]);
     setFollowup("");
     setWorkflowOpen(false);
+    setSessionId(crypto.randomUUID());
   };
 
   const hasMessages = messages.length > 0;

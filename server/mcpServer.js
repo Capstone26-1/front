@@ -154,6 +154,7 @@ async function transitDisruptionHandler({ stationName }) {
       isLastTrain: false,
       trains: [],
       congestionLevel: "normal",
+      apiError: true,
     };
   }
 }
@@ -306,7 +307,7 @@ export const MCP_TOOLS = [
   {
     name: "transit_disruption_tool",
     description:
-      "지하철 실시간 운행 지연·혼잡도를 조회합니다. 지하철 포함 경로이거나 심야 시간대(22시 이후) 운행 이상이 우려될 때 호출하세요.",
+      "지하철 실시간 운행 지연·혼잡도 및 막차 여부를 조회합니다. 시간대 무관하게 항상 호출하세요 — 막차 종료 여부를 확인하는 핵심 도구입니다.",
     input_schema: {
       type: "object",
       properties: {
