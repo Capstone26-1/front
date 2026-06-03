@@ -296,6 +296,9 @@ function AssistantMessage({ data, onOpenWorkflow }) {
         </div>
       </div>
 
+      {/* 추천 경로 & 요금 */}
+      <RouteCard routes={r.routes} />
+
       {/* 점수 분해 + 추천 행동 (2단) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <SectionCard title="왜 위험한가" subtitle="slack = 막차까지 − 도착 예정 − 환승 도보">
@@ -383,6 +386,92 @@ function ScoreChip({ weight, tone }) {
     bad: "bg-rose-500/15 text-rose-300",
   };
   return <span className={"px-2.5 py-1 rounded-md text-sm font-mono " + toneMap[tone]}>{weight}점</span>;
+}
+
+// ───────────────────── 추천 경로 & 요금 ─────────────────────
+
+const MODE_STYLE = {
+  WALK:       { icon: "🚶", label: "도보",   cls: "bg-slate-700/50 text-slate-300" },
+  BUS:        { icon: "🚌", label: "버스",   cls: "bg-emerald-500/20 text-emerald-300" },
+  SUBWAY:     { icon: "🚇", label: "지하철", cls: "bg-indigo-500/20 text-indigo-300" },
+  TRAIN:      { icon: "🚆", label: "기차",   cls: "bg-blue-500/20 text-blue-300" },
+  EXPRESSBUS: { icon: "🚍", label: "고속버스", cls: "bg-amber-500/20 text-amber-300" },
+  AIRPLANE:   { icon: "✈️", label: "항공",   cls: "bg-sky-500/20 text-sky-300" },
+};
+
+function modeStyle(mode) {
+  return MODE_STYLE[mode] || { icon: "•", label: mode || "이동", cls: "bg-slate-700/50 text-slate-300" };
+}
+
+function formatFare(fare) {
+  if (fare == null || fare === 0) return "요금 정보 없음";
+  return `${Number(fare).toLocaleString()}원`;
+}
+
+function RouteCard({ routes }) {
+  if (!routes || routes.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+      <div className="flex items-center gap-2">
+        <span className="text-indigo-400">🧭</span>
+        <span className="text-sm font-semibold text-slate-200">추천 경로 & 요금</span>
+        <span className="text-xs text-slate-500">Tmap 대중교통</span>
+      </div>
+
+      <div className="mt-3 space-y-2.5">
+        {routes.map((route, i) => (
+          <RouteRow key={i} route={route} recommended={i === 0} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RouteRow({ route, recommended }) {
+  const legs = (route.legs || []).filter((l) => l.mode !== "WALK" || (l.durationMinutes || 0) >= 2);
+
+  return (
+    <div
+      className={
+        "rounded-lg border px-3 py-2.5 " +
+        (recommended
+          ? "border-indigo-500/40 bg-indigo-500/10"
+          : "border-slate-800 bg-slate-950/40")
+      }
+    >
+      <div className="flex items-center gap-2 flex-wrap">
+        {recommended ? (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/30 text-indigo-200">
+            추천
+          </span>
+        ) : (
+          <span className="text-xs text-slate-500">경로 {route.rank}</span>
+        )}
+        <span className="text-sm font-semibold text-slate-100">{route.totalTimeMinutes}분</span>
+        <span className="text-xs text-slate-500">환승 {route.transferCount}회</span>
+        <span className="ml-auto text-sm font-semibold text-emerald-300">{formatFare(route.totalFare)}</span>
+      </div>
+
+      <div className="mt-2 flex items-center gap-1 flex-wrap">
+        {legs.map((leg, i) => {
+          const s = modeStyle(leg.mode);
+          return (
+            <React.Fragment key={i}>
+              {i > 0 && <span className="text-slate-600 text-xs">›</span>}
+              <span
+                className={"inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs " + s.cls}
+                title={leg.fromName && leg.toName ? `${leg.fromName} → ${leg.toName}` : undefined}
+              >
+                <span>{s.icon}</span>
+                <span className="font-medium">{leg.routeName || s.label}</span>
+              </span>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // ───────────────────── Workflow 슬라이드 패널 ─────────────────────
@@ -575,6 +664,29 @@ function ToolRegistryList({ usedTools }) {
   );
 }
 
+// ───────────────────── 대화 히스토리 변환 ─────────────────────
+
+// 화면의 메시지 목록을 Claude API 메시지 형식으로 변환한다.
+// assistant 응답은 핵심 판정만 요약해 다음 요청의 맥락으로 전달한다.
+function buildHistory(messages) {
+  return messages.map((m) => {
+    if (m.role === "user") {
+      return { role: "user", content: m.content };
+    }
+    const r = m.result || {};
+    const p = m.parsed || {};
+    if (r.verdict === "대화") {
+      return { role: "assistant", content: r.headline || "" };
+    }
+    const parts = [
+      p.origin && p.destination ? `경로: ${p.origin} → ${p.destination}` : null,
+      r.verdict ? `판정: ${r.verdict}(위험도 ${r.riskScore})` : null,
+      r.headline ? `요약: ${r.headline}` : null,
+    ].filter(Boolean);
+    return { role: "assistant", content: `[이전 분석] ${parts.join(" / ")}` };
+  });
+}
+
 // ───────────────────── App ─────────────────────
 
 export default function App() {
@@ -597,13 +709,15 @@ export default function App() {
   }, [messages, isLoading]);
 
   const handleSend = async (text) => {
+    // 현재까지의 대화를 Claude 메시지 형식으로 변환해 맥락을 유지한다.
+    const history = buildHistory(messages);
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setIsLoading(true);
     setLiveWorkflow([]);
     setWorkflowOpen(false);
 
     try {
-      const result = await runAgent(text, (step) => {
+      const result = await runAgent(text, history, (step) => {
         setLiveWorkflow((prev) => [...prev, step]);
       });
       if (result) {

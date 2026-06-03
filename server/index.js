@@ -11,11 +11,14 @@ import cors from "cors";
 import { runAgent } from "./claude.js";
 
 const app = express();
-app.use(cors({ origin: "http://localhost:3000" }));
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",")
+  : ["http://localhost:3000"];
+app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
 app.post("/api/agent", async (req, res) => {
-  const { message } = req.body;
+  const { message, history } = req.body;
   if (!message) return res.status(400).json({ error: "message 필드가 필요합니다." });
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -25,7 +28,9 @@ app.post("/api/agent", async (req, res) => {
   const send = (payload) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
 
   try {
-    const result = await runAgent(message, (step) => send({ type: "step", step }));
+    const result = await runAgent(message, Array.isArray(history) ? history : [], (step) =>
+      send({ type: "step", step })
+    );
     send({ type: "result", result });
   } catch (err) {
     send({ type: "error", message: err.message });

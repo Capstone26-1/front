@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { searchLocation } from "./tools/kakao.js";
 import { searchTransitRoute } from "./tools/tmap.js";
-import { MCP_TOOLS, executeMcpTool, summarizeMcpTool } from "./mcpServer.js";
+import { MCP_TOOLS, NEWS_CONTEXT_TOOL, executeMcpTool, summarizeMcpTool } from "./mcpServer.js";
 
 let _client;
 function getClient() {
@@ -36,6 +36,7 @@ const BASE_TOOLS = [
       required: ["startX", "startY", "endX", "endY"],
     },
   },
+  NEWS_CONTEXT_TOOL,
 ];
 
 const TOOLS = [...BASE_TOOLS, ...MCP_TOOLS];
@@ -48,6 +49,9 @@ function getSystemPrompt() {
   return `당신은 막차 위험 탐지 AI Agent입니다. MCP Tool Server에 연결된 7개의 도구를 상황에 따라 동적으로 선택하여 사용합니다.
 
 ## 현재 시각: ${timeStr}
+
+## 대화 맥락 활용
+이전 대화 내용이 함께 제공됩니다. 사용자가 출발지·목적지를 앞선 메시지에서 이미 알려줬다면 다시 묻지 말고 그 정보를 그대로 활용하세요. "거기서", "방금 그 경로", "그럼 30분 뒤엔?" 같은 후속 질문은 직전 맥락을 기준으로 해석하세요.
 
 ## 대화형 처리 (도구 호출 없이 즉시 응답)
 
@@ -80,25 +84,24 @@ function getSystemPrompt() {
 1. 출발지·목적지를 파악합니다
 2. search_location으로 두 지점의 좌표를 조회합니다 (병렬 호출 가능)
 3. search_transit_route로 현재 시각 기준 대중교통 경로를 조회합니다
-4. 아래 조건에 해당하면 추가 MCP 도구를 호출합니다
-5. 경로 없음 → 막차 실패, 있음 → 소요시간·여유시간으로 위험도 계산
+4. news_context_tool을 반드시 호출합니다: 출발지·목적지·경로 주요 지명 + "교통 사고 행사 지연" 조합으로 쿼리를 구성하세요 (예: "강남 사당 교통 사고 행사 지연")
+5. news_context_tool 결과의 issues 배열에 따라 추가 MCP 도구를 호출합니다
+6. 경로 없음 → 막차 실패, 있음 → 소요시간·여유시간 + 뉴스 이슈로 위험도 계산
 
-## MCP 도구 호출 조건 (상황에 따라 동적 선택)
-- weather_alert_tool: 사용자가 비/눈/날씨/폭우를 언급하거나, 심야 우천 가능성이 있을 때
-- road_incident_tool: 경로 탐색 결과가 비정상(경로 없음·우회)이거나 도로 통제 가능성이 있을 때
-- transit_disruption_tool: 지하철 포함 경로이고 22시 이후 심야 시간대일 때
-- public_event_tool: 잠실·상암·고척·올림픽공원 등 대형 경기장 인근 역이 출발/도착지일 때
-- news_context_tool: road_incident_tool에서 사고·통제가 감지되거나 search_transit_route 결과가 비정상(경로 없음·우회)일 때 반드시 호출하세요. 검색어는 이상이 감지된 경로의 주요 지명 + 사고/통제로 구성하세요 (예: "서소문 고가도로 사고", "올림픽대로 통제", "강남 교통 이상"). 결과의 issues 배열에 따라 추가 도구를 선택하세요:
-  - issues에 '날씨' → weather_alert_tool 추가 호출
-  - issues에 '지하철지연' → transit_disruption_tool 추가 호출
-  - issues에 '행사혼잡' → public_event_tool 추가 호출
+## MCP 도구 호출 조건 (news_context_tool 결과 기반 동적 선택)
+news_context_tool은 항상 호출되며, 결과의 issues 배열에 따라 추가 MCP 도구를 호출합니다:
+- issues에 '날씨'      → weather_alert_tool 호출 (사용자가 날씨를 언급한 경우도 포함)
+- issues에 '도로통제'  → road_incident_tool 호출 (경로 비정상 시 포함)
+- issues에 '지하철지연'→ transit_disruption_tool 호출 (22시 이후 심야 시간대도 포함)
+- issues에 '행사혼잡'  → public_event_tool 호출 (잠실·상암·고척·올림픽공원 인근도 포함)
 
 ## 위험도 기준
 - 여유 30분 이상 → 안전 (riskScore 0, verdictTone: emerald, verdict: 안전)
 - 여유 10~30분  → 주의 (riskScore 10~30, verdictTone: sky, verdict: 주의)
 - 여유 0~10분   → 위험 (riskScore 60~90, verdictTone: rose, verdict: 위험)
 - 경로 없음     → 막차 실패 (riskScore 100, verdictTone: rose, verdict: 매우 위험)
-- MCP 도구에서 위험 요소 감지 시 riskScore를 상향 조정하세요
+- news_context_tool issues 감지 시 이슈 1개당 riskScore +10 상향 조정하세요
+- 추가 MCP 도구에서 위험 요소 감지 시 riskScore를 추가 상향 조정하세요
 
 ## 출력
 분석 후 반드시 아래 형식으로 출력하세요:
@@ -155,13 +158,15 @@ async function executeTool(name, input) {
   return await executeMcpTool(name, input);
 }
 
-export async function runAgent(userMessage, onStep) {
-  const messages = [{ role: "user", content: userMessage }];
+export async function runAgent(userMessage, history = [], onStep) {
+  // 이전 대화 맥락(history)을 messages 앞에 붙여 같은 세션 내 연속성을 유지한다.
+  const messages = [...history, { role: "user", content: userMessage }];
   const workflowSteps = [];
   const toolsUsed = [];
   const startTime = Date.now();
   let planCount = 1;
   let criticNg = 0;
+  let routeData = null; // 마지막으로 조회된 대중교통 경로(요금·구간 포함)
 
   const addStep = (step) => {
     workflowSteps.push(step);
@@ -189,7 +194,7 @@ export async function runAgent(userMessage, onStep) {
       addStep({ kind: "final", body: parsed?.result?.headline || "분석 완료" });
       return {
         parsed: parsed?.parsed,
-        result: { ...parsed?.result, toolsUsed },
+        result: { ...parsed?.result, toolsUsed, routes: routeData?.routes || null },
         workflow: workflowSteps,
         stats: {
           tools: toolsUsed.length,
@@ -209,6 +214,9 @@ export async function runAgent(userMessage, onStep) {
         toolsUsed.push(toolUse.name);
         try {
           const result = await executeTool(toolUse.name, toolUse.input);
+          if (toolUse.name === "search_transit_route" && result.available) {
+            routeData = result; // 추천 경로/요금 카드용으로 보관
+          }
           addStep({ kind: "tool", tool: toolUse.name, result: summarizeResult(toolUse.name, result) });
           toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: JSON.stringify(result) });
         } catch (err) {

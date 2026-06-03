@@ -1,10 +1,10 @@
 const SERVER_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
-export async function runAgent(userMessage, onStep) {
+export async function runAgent(userMessage, history, onStep) {
   const response = await fetch(`${SERVER_URL}/api/agent`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: userMessage }),
+    body: JSON.stringify({ message: userMessage, history: history || [] }),
   });
 
   if (!response.ok) throw new Error(`서버 오류: ${response.status}`);

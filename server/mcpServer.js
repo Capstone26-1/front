@@ -249,6 +249,23 @@ async function newsContextHandler({ query }) {
   }
 }
 
+export const NEWS_CONTEXT_TOOL = {
+  name: "news_context_tool",
+  description:
+    "출발지·목적지 경로 주변의 교통 영향 뉴스를 검색합니다. 행사·사고·날씨·지하철 이슈를 감지해 위험도 계산에 반영합니다. search_transit_route 직후 반드시 호출하세요.",
+  input_schema: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description:
+          "출발지·목적지·경로 주요 지명 기반 검색 쿼리 (예: '강남 사당 교통 사고 행사 지연')",
+      },
+    },
+    required: ["query"],
+  },
+};
+
 export const MCP_TOOLS = [
   {
     name: "weather_alert_tool",
@@ -314,22 +331,6 @@ export const MCP_TOOLS = [
         },
       },
       required: ["location"],
-    },
-  },
-  {
-    name: "news_context_tool",
-    description:
-      "뉴스 검색으로 교통 이상의 원인을 파악합니다. road_incident_tool에서 사고·통제가 감지되거나 search_transit_route 결과가 비정상(경로 없음·우회)일 때 반드시 호출하세요. 결과의 issues 배열에 따라 추가 도구를 선택하세요: '날씨'→weather_alert_tool, '지하철지연'→transit_disruption_tool, '행사혼잡'→public_event_tool",
-    input_schema: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description:
-            "검색 쿼리 (예: '강남 사당 교통 막힘 원인', '2호선 지연 사고')",
-        },
-      },
-      required: ["query"],
     },
   },
 ];
