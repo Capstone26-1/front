@@ -42,7 +42,7 @@ const BASE_TOOLS = [
 const TOOLS = [...BASE_TOOLS, ...MCP_TOOLS];
 
 function getSystemPrompt() {
-  const now = new Date();
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
   const pad = (n) => String(n).padStart(2, "0");
   const timeStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
