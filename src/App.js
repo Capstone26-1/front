@@ -299,6 +299,9 @@ function AssistantMessage({ data, onOpenWorkflow }) {
       {/* 추천 경로 & 요금 */}
       <RouteCard routes={r.routes} />
 
+      {/* 택시 대안 */}
+      <TaxiCard taxi={r.taxiSuggestion} />
+
       {/* 점수 분해 + 추천 행동 (2단) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <SectionCard title="왜 위험한가" subtitle="slack = 막차까지 − 도착 예정 − 환승 도보">
@@ -397,6 +400,7 @@ const MODE_STYLE = {
   TRAIN:      { icon: "🚆", label: "기차",   cls: "bg-blue-500/20 text-blue-300" },
   EXPRESSBUS: { icon: "🚍", label: "고속버스", cls: "bg-amber-500/20 text-amber-300" },
   AIRPLANE:   { icon: "✈️", label: "항공",   cls: "bg-sky-500/20 text-sky-300" },
+  TAXI:       { icon: "🚕", label: "택시",   cls: "bg-yellow-500/20 text-yellow-300" },
 };
 
 function modeStyle(mode) {
@@ -470,6 +474,45 @@ function RouteRow({ route, recommended }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function TaxiCard({ taxi }) {
+  if (!taxi?.available) return null;
+  return (
+    <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-yellow-400">🚕</span>
+        <span className="text-sm font-semibold text-yellow-200">택시 대안</span>
+        <span className="text-xs text-yellow-500/70 ml-auto">대중교통 막차 종료</span>
+      </div>
+      <div className="flex items-center gap-2 text-sm text-slate-200 mb-2">
+        <span className="font-medium text-yellow-300">{taxi.fromName}</span>
+        <span className="text-slate-500">→</span>
+        <span className="font-medium text-yellow-300">{taxi.toName}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs text-slate-400">
+        <div>
+          <div className="text-slate-500">예상 요금</div>
+          <div className="text-slate-200 font-semibold">~{Number(taxi.estimatedFare).toLocaleString()}원</div>
+        </div>
+        <div>
+          <div className="text-slate-500">심야 요금 (22~02시)</div>
+          <div className="text-yellow-300 font-semibold">~{Number(taxi.estimatedFareNight).toLocaleString()}원</div>
+        </div>
+        <div>
+          <div className="text-slate-500">예상 소요</div>
+          <div className="text-slate-200 font-semibold">약 {taxi.durationMinutes}분</div>
+        </div>
+        <div>
+          <div className="text-slate-500">거리</div>
+          <div className="text-slate-200 font-semibold">{taxi.distanceKm}km</div>
+        </div>
+      </div>
+      {taxi.reason && (
+        <div className="mt-2 text-xs text-yellow-500/80 border-t border-yellow-500/20 pt-2">{taxi.reason}</div>
+      )}
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { estimateTaxiFare } from "./tools/tmap.js";
+
 function getTodayStr() {
   const now = new Date();
   const y = now.getFullYear();
@@ -202,6 +204,15 @@ function publicEventHandler({ location }) {
   };
 }
 
+function taxiFareHandler({ startX, startY, endX, endY, startName, endName }) {
+  const result = estimateTaxiFare({ startX, startY, endX, endY });
+  return {
+    startName: startName || "출발지",
+    endName: endName || "목적지",
+    ...result,
+  };
+}
+
 async function newsContextHandler({ query }) {
   try {
     const res = await fetch(
@@ -334,6 +345,23 @@ export const MCP_TOOLS = [
       required: ["location"],
     },
   },
+  {
+    name: "taxi_fare_tool",
+    description:
+      "두 지점 간 택시 예상 요금을 계산합니다. search_transit_route가 available: false를 반환했거나, 경로는 있으나 riskScore ≥ 70이고 조회 시각이 22:00 이후인 경우 반드시 호출하세요.",
+    input_schema: {
+      type: "object",
+      properties: {
+        startX: { type: "number", description: "출발지 경도" },
+        startY: { type: "number", description: "출발지 위도" },
+        endX: { type: "number", description: "목적지 경도" },
+        endY: { type: "number", description: "목적지 위도" },
+        startName: { type: "string", description: "출발지명 (예: 삼각지역)" },
+        endName: { type: "string", description: "목적지명 (예: 인덕원역)" },
+      },
+      required: ["startX", "startY", "endX", "endY"],
+    },
+  },
 ];
 
 export async function executeMcpTool(name, input) {
@@ -343,6 +371,7 @@ export async function executeMcpTool(name, input) {
     return await transitDisruptionHandler(input);
   if (name === "public_event_tool") return publicEventHandler(input);
   if (name === "news_context_tool") return await newsContextHandler(input);
+  if (name === "taxi_fare_tool") return taxiFareHandler(input);
   throw new Error(`알 수 없는 MCP tool: ${name}`);
 }
 
@@ -363,5 +392,7 @@ export function summarizeMcpTool(name, result) {
     return result.hasIssue
       ? `뉴스 이슈 감지 (${result.issues.join(", ")}): ${result.headlines[0] || ""}`
       : "관련 뉴스 없음";
+  if (name === "taxi_fare_tool")
+    return `택시 ${result.startName}→${result.endName}: 약 ${result.estimatedFare.toLocaleString()}원 (심야 ${result.estimatedFareNight.toLocaleString()}원), ${result.distanceKm}km`;
   return "";
 }
