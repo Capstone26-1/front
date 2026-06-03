@@ -148,7 +148,15 @@ async function transitDisruptionHandler({ stationName }) {
       if (avgTime > 480) congestionLevel = "very_crowded";
     }
 
-    return { stationName, hasDisruption, isLastTrain, trains, congestionLevel };
+    const lastTrain = trains.find((t) => t.isLastCar);
+    return {
+      stationName,
+      hasDisruption,
+      isLastTrain,
+      trains,
+      congestionLevel,
+      lastTrainDestination: lastTrain?.destination || null,
+    };
   } catch {
     return {
       stationName,
