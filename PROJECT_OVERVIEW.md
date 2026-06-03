@@ -20,19 +20,20 @@
 | 백엔드 | Node.js, Express, SSE |
 | AI | Claude API (claude-opus-4-8), Tool Use |
 | 지도/경로 | Kakao 장소 API, Tmap 대중교통 API |
-| MCP Tools | 기상청, 국토부 ITS, 서울 지하철, 네이버 뉴스, Mock |
+| MCP Tools | 기상청, 국토부 ITS, 서울 지하철, 네이버 뉴스, Mock, 택시 요금 계산(자체 수식) |
+| 배포 | Vercel (프론트엔드), Railway (백엔드) |
 
 ---
 
 ## 아키텍처
 
 ```
-[브라우저 - localhost:3000]
+[브라우저 - mksaveagent2.vercel.app]
   React (src/App.js)
   └─ POST /api/agent (SSE 스트림)
             │
             ▼
-[백엔드 - localhost:3001]
+[백엔드 - deployment-production-91c7.up.railway.app]
   Express (server/index.js)
   └─ server/claude.js  ← Claude API 호출 + Tool 실행
       ├─ BASE TOOLS (항상 호출)
@@ -42,9 +43,10 @@
       └─ MCP TOOLS (동적 선택 — 상황에 따라 자동 결정)
           ├─ weather_alert_tool      → 기상청 단기예보 API
           ├─ road_incident_tool      → 국토부 ITS 돌발상황 API
-          ├─ transit_disruption_tool → 서울 열린데이터광장 지하철 API
+          ├─ transit_disruption_tool → 서울 열린데이터광장 지하철 API (항상 호출)
           ├─ public_event_tool       → Mock 데이터 (잠실·상암·고척·올림픽공원)
-          └─ news_context_tool       → 네이버 뉴스 검색 API
+          ├─ news_context_tool       → 네이버 뉴스 검색 API
+          └─ taxi_fare_tool          → 자체 수식 (Haversine + 서울 택시 요금표)
 ```
 
 ---
@@ -62,27 +64,27 @@ search_location × 2      ← 출발지·목적지 좌표 획득
     ▼
 search_transit_route     ← 경로 + 소요시간 획득
     │
-    ├─ 경로 정상 ──────────────────────── 바로 안전 판정
+    ▼
+news_context_tool        ← 항상 호출 (경로 주변 교통 이슈 탐지)
     │
-    └─ 경로 이상 or 도로 언급
+    ├─ issues: 날씨       → weather_alert_tool
+    ├─ issues: 도로통제   → road_incident_tool
+    └─ issues: 행사혼잡  → public_event_tool
+    │
+    ▼
+transit_disruption_tool  ← 항상 호출 (실시간 막차 여부·운행 지연 확인)
+    │
+    ├─ 정상 운행 ────────────────────── 위험도 판정
+    │
+    └─ 막차 종료 or (riskScore ≥ 70 + 22시 이후)
          │
          ▼
-    road_incident_tool   ← ITS API 도로 돌발상황 조회
+    taxi_fare_tool       ← 택시 대안 요금 계산
          │
-         ├─ 이상 없음 ─────────────────── 판정
-         │
-         └─ 이상 있음
-              │
-              ▼
-         news_context_tool  ← 네이버 뉴스로 "왜 막혔는지" 원인 파악
-              │
-              ├─ issues: 날씨       → weather_alert_tool 추가 호출
-              ├─ issues: 지하철지연 → transit_disruption_tool 추가 호출
-              └─ issues: 행사혼잡  → public_event_tool 추가 호출
-                              │
-                              ▼
-                    위험도 판정 (riskScore 0~100)
-                    verdict: 안전 / 주의 / 위험 / 매우 위험
+         ▼
+    위험도 판정 (riskScore 0~100)
+    verdict: 안전 / 주의 / 위험 / 매우 위험
+    + 택시 대안 카드 표시 (해당 시)
 ```
 
 ---
@@ -106,12 +108,13 @@ search_transit_route     ← 경로 + 소요시간 획득
 
 | 시나리오 | 쿼리 예시 | 호출되는 Tool |
 |---|---|---|
-| A. 평상시 | "강남역에서 사당역 막차 탈 수 있어?" | `location`×2 + `route` + `transit` |
-| B. 도로사고 | "서소문 고가도로 붕괴됐다는데 괜찮아?" | + `road_incident` + `news_context` |
+| A. 평상시 | "강남역에서 사당역 막차 탈 수 있어?" | `location`×2 + `route` + `news` + `transit` |
+| B. 도로사고 | "서소문 고가도로 붕괴됐다는데 괜찮아?" | + `road_incident` |
 | C. 폭우 | "비 오는데 지금 출발해도 막차 가능해?" | + `weather_alert` |
-| D. 경기 종료 | "잠실역에서 밤 11시 30분에 출발하면?" | + `public_event` + `transit` |
+| D. 경기 종료 | "잠실역에서 밤 11시 30분에 출발하면?" | + `public_event` |
+| E. 막차 종료 | "돌곶이역에서 대안중학교 새벽 1시 출발" | + `taxi_fare` → 택시 대안 카드 표시 |
 
-시나리오 A는 Tool 2~3개, B~D는 4~5개 — 동적 선택이 명확히 보이는 구조입니다.
+시나리오 A는 Tool 4개, B~D는 5개, E는 6개 — 동적 선택이 명확히 보이는 구조입니다.
 
 ---
 
@@ -120,7 +123,7 @@ search_transit_route     ← 경로 + 소요시간 획득
 ```
 FE/
 ├── src/
-│   ├── App.js              ← 메인 UI (TOOL_REGISTRY 7개, 채팅·Hero·Workflow 패널)
+│   ├── App.js              ← 메인 UI (TaxiCard 포함, 채팅·Hero·Workflow 패널)
 │   ├── api/
 │   │   ├── agent.js        ← 백엔드 /api/agent SSE 호출
 │   │   ├── kakao.js        ← Kakao API (레거시, 현재 미사용)
@@ -128,17 +131,17 @@ FE/
 │   └── index.js
 │
 ├── server/
-│   ├── index.js            ← Express 서버 (포트 3001, SSE 엔드포인트)
+│   ├── index.js            ← Express 서버 (포트 3001, SSE 엔드포인트, 세션 캐시)
 │   ├── claude.js           ← Claude API 호출, Tool 실행, 시스템 프롬프트
-│   ├── mcpServer.js        ← MCP Tool 5개 정의 및 핸들러
+│   ├── mcpServer.js        ← MCP Tool 6개 정의 및 핸들러
 │   └── tools/
 │       ├── kakao.js        ← Kakao 장소 검색
-│       └── tmap.js         ← Tmap 대중교통 경로
+│       └── tmap.js         ← Tmap 대중교통 경로 + 택시 요금 계산(estimateTaxiFare)
 │
-├── ExpectedQuestions/      ← 발표 예상 질문 15개 md
-├── Pendings/               ← 보류 작업 (팀원 정보, 배포 방법)
-├── Studings/               ← 개인 학습 정리 (git, CRA)
-├── .env.local              ← API 키 8개 (팀 공유용)
+├── ExpectedQuestions/      ← 발표 예상 질문 md
+├── Pendings/               ← 보류 작업
+├── Studings/               ← 개인 학습 정리
+├── .env.local              ← API 키 8개
 └── PROJECT_OVERVIEW.md     ← 이 파일
 ```
 
@@ -146,12 +149,12 @@ FE/
 
 ## 남은 작업
 
-| 우선순위 | 작업 |
-|---|---|
-| 🔴 필수 | `Pendings/team_roles.md` — 팀원 정보 입력 |
-| 🔴 필수 | 배포 방법 결정 (WiFi 로컬 IP / ngrok / Vercel+Railway) |
-| 🟡 권장 | 시나리오 A~D 발표 리허설 |
-| 🟢 선택 | `sol1` → `main` 브랜치 머지 |
+| 우선순위 | 작업 | 파일 |
+|---|---|---|
+| 🔴 필수 | 팀원 정보 입력 | `Pendings/team_roles.md` |
+| 🟡 권장 | Mock 데이터 제거 (public_event_tool) | `Pendings/remove_mock_data.md` |
+| 🟡 권장 | 최적화 (Tmap 정확도, 캐시 TTL 등) | `Pendings/optimization.md` |
+| 🟢 선택 | 시나리오 A~E 발표 리허설 | — |
 
 ---
 
@@ -167,3 +170,11 @@ node index.js
 npm start
 # → http://localhost:3000
 ```
+
+## 배포 현황
+
+| 서비스 | URL | 브랜치 |
+|---|---|---|
+| Vercel (프론트) | https://mksaveagent2.vercel.app | Taxi |
+| Railway (백엔드) | https://deployment-production-91c7.up.railway.app | Taxi |
+| GitHub (코드) | https://github.com/Capstone26-1/mksaveagent | Taxi |
