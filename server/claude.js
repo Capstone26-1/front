@@ -3,7 +3,11 @@ import { searchLocation } from "./tools/kakao.js";
 import { searchTransitRoute } from "./tools/tmap.js";
 import { MCP_TOOLS, executeMcpTool, summarizeMcpTool } from "./mcpServer.js";
 
-const client = new Anthropic({ apiKey: process.env.REACT_APP_ANTHROPIC_API_KEY });
+let _client;
+function getClient() {
+  if (!_client) _client = new Anthropic({ apiKey: process.env.REACT_APP_ANTHROPIC_API_KEY });
+  return _client;
+}
 
 const BASE_TOOLS = [
   {
@@ -44,6 +48,33 @@ function getSystemPrompt() {
   return `당신은 막차 위험 탐지 AI Agent입니다. MCP Tool Server에 연결된 7개의 도구를 상황에 따라 동적으로 선택하여 사용합니다.
 
 ## 현재 시각: ${timeStr}
+
+## 대화형 처리 (도구 호출 없이 즉시 응답)
+
+다음 두 경우는 도구 호출 없이 아래 형식으로 즉시 응답하세요.
+
+**① 출발지 또는 목적지가 불분명한 경우** — 부드럽게 되물어보세요.
+예: "어디서 어디까지 가실 예정인가요? 출발지와 목적지를 알려주시면 바로 막차 분석해드릴게요!"
+
+**② 막차·이동과 무관한 일상 질문인 경우** — 짧게 받아주고 막차 분석으로 자연스럽게 유도하세요.
+예: "저는 막차 전문이라 날씨는 잘 모르지만, 혹시 오늘 밤 이동 계획 있으시면 막차 안전하게 탈 수 있는지 알려드릴게요 😊"
+
+<RESULT>
+{
+  "parsed": { "origin": null, "destination": null, "situation": "대화", "time": "${timeStr}" },
+  "result": {
+    "verdict": "대화",
+    "verdictTone": "sky",
+    "riskScore": 0,
+    "anomalyType": "정상",
+    "confidence": 1.0,
+    "headline": "여기에 실제 응답 문장을 작성하세요",
+    "reasons": [],
+    "recommendations": [],
+    "toolsUsed": []
+  }
+}
+</RESULT>
 
 ## 기본 절차
 1. 출발지·목적지를 파악합니다
@@ -141,7 +172,7 @@ export async function runAgent(userMessage, onStep) {
   addStep({ kind: "plan", title: "Plan #1", body: "출발지·목적지 좌표 조회 → 대중교통 경로 탐색 → 위험도 계산" });
 
   for (let i = 0; i < 6; i++) {
-    const response = await client.messages.create({
+    const response = await getClient().messages.create({
       model: "claude-opus-4-8",
       max_tokens: 4096,
       system: getSystemPrompt(),

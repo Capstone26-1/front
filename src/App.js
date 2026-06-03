@@ -228,10 +228,25 @@ function LoadingMessage({ steps = [] }) {
   );
 }
 
+function ChatBubbleMessage({ r }) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="shrink-0 w-8 h-8 rounded-lg bg-indigo-500/90 flex items-center justify-center text-white font-bold text-sm">
+        막
+      </div>
+      <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-tl-md bg-slate-800 text-slate-100 text-sm leading-relaxed">
+        {r.headline}
+      </div>
+    </div>
+  );
+}
+
 // 메인 어시스턴트 응답 카드: Goal Manager + 결과 카드 + 점수 분해 + 추천 + Tools + Workflow 버튼
 function AssistantMessage({ data, onOpenWorkflow }) {
   const r = data.result;
   const parsed = data.parsed;
+
+  if (r?.verdict === "대화") return <ChatBubbleMessage r={r} />;
 
   const verdictToneMap = {
     emerald: "bg-emerald-500/10 border-emerald-500/30 text-emerald-300",
