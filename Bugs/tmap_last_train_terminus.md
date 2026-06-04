@@ -139,6 +139,42 @@
 
 ---
 
+## Anthropic API 활용 해결 방안 (채택)
+
+앤트로픽 API 할당량이 충분하다는 이점을 활용한 실질적 해결책.
+외부 API(실시간/시간표)의 한계를 Claude의 서울 지하철 지식으로 보완.
+
+### 옵션 1: 시스템 프롬프트 강화 (Claude 지식 직접 활용)
+
+- 추가 API 호출 없이, Tmap 경로 + 출발 시각을 주고 Claude 자체 서울 지하철 막차 지식으로 "이 환승역까지 막차가 가는가"를 엄격히 추론하도록 프롬프트 강화
+- **장점**: 구현 부담 없음
+- **단점**: 비결정적, 정확도가 Claude 지식에 의존
+
+### 옵션 2: 경로 검증 전용 Claude 서브호출 (채택)
+
+- 새 MCP 도구 `validate_transit_route` 추가
+- 지하철 leg마다 Anthropic API(`claude-haiku-4-5-20251001`)를 서브호출해 막차 종착역 검증
+- 도달 불가 판정 시: 종착역 좌표(Kakao API)를 구해 Tmap으로 재탐색
+- 결과: `{hasInfeasibleLegs, lastReachableStation, altRoute}`
+- 구현: `server/tools/subwayValidator.js` (신규) + `server/mcpServer.js` + `server/claude.js` 시스템 프롬프트
+- **장점**: 낮/밤 언제 테스트해도 작동, 구조화된 JSON 출력으로 안정적
+- **단점**: 지하철 leg당 haiku 호출 1회 추가
+
+### 옵션 3: 실시간 API + Claude 해석 개선
+
+- `transitDisruptionHandler`에 방향(`updnLine`)·종착역(`bstatnNm`) 필드 추가
+- **단점**: 실시간 API 특성상 미래 시각(23:40) 검증 여전히 불가
+
+### 비교표
+
+| | 구현 부담 | 낮 테스트 | 정확도 | 추가 API 비용 |
+|---|---|---|---|---|
+| 옵션 1 (프롬프트 강화) | 낮음 | ✅ | 비결정적 | 없음 |
+| **옵션 2 (서브호출, 채택)** | 중간 | ✅ | 안정적 | haiku 호출/leg |
+| 옵션 3 (실시간 보강) | 낮음 | ❌ | 부분적 | 없음 |
+
+---
+
 ## 관련 인프라
 
 - `server/tools/tmap.js` → `searchTransitRoute` (leg `departureTime` null 확인)
