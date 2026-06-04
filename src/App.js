@@ -297,7 +297,7 @@ function AssistantMessage({ data, onOpenWorkflow }) {
       </div>
 
       {/* 추천 경로 & 요금 */}
-      <RouteCard routes={r.routes} />
+      <RouteCard routes={r.routes} taxiSuggestion={r.taxiSuggestion} latestSafeDeparture={r.latestSafeDeparture} />
 
       {/* 택시 대안 */}
       <TaxiCard taxi={r.taxiSuggestion} />
@@ -412,8 +412,9 @@ function formatFare(fare) {
   return `${Number(fare).toLocaleString()}원`;
 }
 
-function RouteCard({ routes }) {
+function RouteCard({ routes, taxiSuggestion, latestSafeDeparture }) {
   if (!routes || routes.length === 0) return null;
+  const hasInfeasible = taxiSuggestion?.available;
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
@@ -424,28 +425,70 @@ function RouteCard({ routes }) {
       </div>
 
       <div className="mt-3 space-y-2.5">
+        {hasInfeasible && <TaxiRouteRow taxi={taxiSuggestion} />}
         {routes.map((route, i) => (
-          <RouteRow key={i} route={route} recommended={i === 0} />
+          <RouteRow
+            key={i}
+            route={route}
+            recommended={i === 0}
+            infeasible={hasInfeasible}
+            latestSafeDeparture={i === 0 ? latestSafeDeparture : null}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function RouteRow({ route, recommended }) {
+function TaxiRouteRow({ taxi }) {
+  return (
+    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/30 text-amber-200">
+          현재 대안
+        </span>
+        <span className="text-sm font-semibold text-slate-100">지하철 + 택시</span>
+        <span className="ml-auto text-sm font-semibold text-amber-300">
+          ~{Number(taxi.estimatedFare).toLocaleString()}원
+          <span className="text-xs text-amber-500/70 ml-1">(심야 ~{Number(taxi.estimatedFareNight).toLocaleString()}원)</span>
+        </span>
+      </div>
+      <div className="mt-2 flex items-center gap-1 flex-wrap">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-slate-700/60 text-slate-300">
+          <span>🚇</span>
+          <span className="font-medium">지하철 최대 이용</span>
+        </span>
+        <span className="text-slate-600 text-xs">›</span>
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-amber-500/20 text-amber-300">
+          <span>🚕</span>
+          <span className="font-medium">{taxi.fromName} → {taxi.toName}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function RouteRow({ route, recommended, infeasible, latestSafeDeparture }) {
   const legs = (route.legs || []).filter((l) => l.mode !== "WALK" || (l.durationMinutes || 0) >= 2);
+  const showEarlierBadge = recommended && infeasible;
 
   return (
     <div
       className={
         "rounded-lg border px-3 py-2.5 " +
-        (recommended
+        (showEarlierBadge
+          ? "border-amber-700/30 bg-amber-900/10"
+          : recommended
           ? "border-indigo-500/40 bg-indigo-500/10"
           : "border-slate-800 bg-slate-950/40")
       }
     >
       <div className="flex items-center gap-2 flex-wrap">
-        {recommended ? (
+        {showEarlierBadge ? (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-700/30 text-amber-300">
+            출발 앞당기기 시
+          </span>
+        ) : recommended ? (
           <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/30 text-indigo-200">
             추천
           </span>
@@ -456,6 +499,10 @@ function RouteRow({ route, recommended }) {
         <span className="text-xs text-slate-500">환승 {route.transferCount}회</span>
         <span className="ml-auto text-sm font-semibold text-emerald-300">{formatFare(route.totalFare)}</span>
       </div>
+
+      {showEarlierBadge && latestSafeDeparture && (
+        <div className="mt-1 text-[11px] text-amber-500/80">※ {latestSafeDeparture} 이전 출발 필요</div>
+      )}
 
       <div className="mt-2 flex items-center gap-1 flex-wrap">
         {legs.map((leg, i) => {
