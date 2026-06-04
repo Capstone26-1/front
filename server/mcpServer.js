@@ -1,3 +1,6 @@
+import { estimateTaxiFare, searchTransitRoute } from "./tools/tmap.js";
+import { validateSubwayLeg } from "./tools/subwayValidator.js";
+
 function getTodayStr() {
   const now = new Date();
   const y = now.getFullYear();
@@ -146,7 +149,15 @@ async function transitDisruptionHandler({ stationName }) {
       if (avgTime > 480) congestionLevel = "very_crowded";
     }
 
-    return { stationName, hasDisruption, isLastTrain, trains, congestionLevel };
+    const lastTrain = trains.find((t) => t.isLastCar);
+    return {
+      stationName,
+      hasDisruption,
+      isLastTrain,
+      trains,
+      congestionLevel,
+      lastTrainDestination: lastTrain?.destination || null,
+    };
   } catch {
     return {
       stationName,
@@ -157,6 +168,62 @@ async function transitDisruptionHandler({ stationName }) {
       apiError: true,
     };
   }
+}
+
+async function validateTransitRouteHandler({ legs, departureTime, endX, endY, finalDestination }) {
+  const results = [];
+  let firstBlock = null;
+
+  for (const leg of legs) {
+    if (leg.mode !== "SUBWAY") {
+      results.push({ ...leg, feasible: true, skipped: true });
+      continue;
+    }
+    const verdict = await validateSubwayLeg({
+      line: leg.routeName,
+      fromStation: leg.fromName,
+      toStation: leg.toName,
+      departureTime,
+    });
+    results.push({ ...leg, ...verdict });
+    if (!verdict.feasible && !firstBlock) {
+      firstBlock = { station: verdict.terminus, reason: verdict.reason };
+    }
+  }
+
+  if (!firstBlock) return { results, hasInfeasibleLegs: false, lastReachableStation: null, altRoute: null };
+
+  let altRoute = null;
+  let lastReachableX = null;
+  let lastReachableY = null;
+  try {
+    const kakaoRes = await fetch(
+      `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(firstBlock.station + "역")}`,
+      { headers: { Authorization: `KakaoAK ${process.env.REACT_APP_KAKAO_API_KEY}` } }
+    );
+    const kakaoData = await kakaoRes.json();
+    const place = kakaoData.documents?.[0];
+    if (place) {
+      lastReachableX = place.x;
+      lastReachableY = place.y;
+      altRoute = await searchTransitRoute({ startX: place.x, startY: place.y, endX, endY });
+    }
+  } catch {
+    // 재탐색 실패 시 null — Claude가 택시 대안으로 처리
+  }
+
+  const latestSafeDeparture = results.find(r => !r.feasible)?.latestSafeDeparture ?? null;
+
+  return {
+    results,
+    hasInfeasibleLegs: true,
+    lastReachableStation: firstBlock.station,
+    lastReachableX,
+    lastReachableY,
+    blockReason: firstBlock.reason,
+    latestSafeDeparture,
+    altRoute,
+  };
 }
 
 function publicEventHandler({ location }) {
@@ -199,6 +266,15 @@ function publicEventHandler({ location }) {
     estimatedCrowd: 0,
     endTime: "",
     affectedLines: [],
+  };
+}
+
+function taxiFareHandler({ startX, startY, endX, endY, startName, endName }) {
+  const result = estimateTaxiFare({ startX, startY, endX, endY });
+  return {
+    startName: startName || "출발지",
+    endName: endName || "목적지",
+    ...result,
   };
 }
 
@@ -334,6 +410,50 @@ export const MCP_TOOLS = [
       required: ["location"],
     },
   },
+  {
+    name: "taxi_fare_tool",
+    description:
+      "두 지점 간 택시 예상 요금을 계산합니다. search_transit_route가 available: false를 반환했거나, 경로는 있으나 riskScore ≥ 70이고 조회 시각이 22:00 이후인 경우 반드시 호출하세요.",
+    input_schema: {
+      type: "object",
+      properties: {
+        startX: { type: "number", description: "출발지 경도" },
+        startY: { type: "number", description: "출발지 위도" },
+        endX: { type: "number", description: "목적지 경도" },
+        endY: { type: "number", description: "목적지 위도" },
+        startName: { type: "string", description: "출발지명 (예: 삼각지역)" },
+        endName: { type: "string", description: "목적지명 (예: 인덕원역)" },
+      },
+      required: ["startX", "startY", "endX", "endY"],
+    },
+  },
+  {
+    name: "validate_transit_route",
+    description: "Tmap 경로의 지하철 leg마다 Anthropic AI로 막차 종착역을 검증. 도달 불가 시 해당 지점에서 최종 목적지까지 Tmap 대안 경로를 자동 재탐색한다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        legs: {
+          type: "array",
+          description: "search_transit_route 결과의 legs 배열",
+          items: {
+            type: "object",
+            properties: {
+              mode: { type: "string" },
+              routeName: { type: "string" },
+              fromName: { type: "string" },
+              toName: { type: "string" },
+            },
+          },
+        },
+        departureTime: { type: "string", description: "출발 시각 (HH:MM 형식, 예: 23:40)" },
+        endX: { type: "string", description: "최종 목적지 경도" },
+        endY: { type: "string", description: "최종 목적지 위도" },
+        finalDestination: { type: "string", description: "최종 목적지 역명 (표시용)" },
+      },
+      required: ["legs", "departureTime", "endX", "endY", "finalDestination"],
+    },
+  },
 ];
 
 export async function executeMcpTool(name, input) {
@@ -343,6 +463,8 @@ export async function executeMcpTool(name, input) {
     return await transitDisruptionHandler(input);
   if (name === "public_event_tool") return publicEventHandler(input);
   if (name === "news_context_tool") return await newsContextHandler(input);
+  if (name === "taxi_fare_tool") return taxiFareHandler(input);
+  if (name === "validate_transit_route") return await validateTransitRouteHandler(input);
   throw new Error(`알 수 없는 MCP tool: ${name}`);
 }
 
@@ -363,5 +485,11 @@ export function summarizeMcpTool(name, result) {
     return result.hasIssue
       ? `뉴스 이슈 감지 (${result.issues.join(", ")}): ${result.headlines[0] || ""}`
       : "관련 뉴스 없음";
+  if (name === "taxi_fare_tool")
+    return `택시 ${result.startName}→${result.endName}: 약 ${result.estimatedFare.toLocaleString()}원 (심야 ${result.estimatedFareNight.toLocaleString()}원), ${result.distanceKm}km`;
+  if (name === "validate_transit_route")
+    return result.hasInfeasibleLegs
+      ? `막차 도달 불가: ${result.lastReachableStation}까지만 가능 — ${result.blockReason}`
+      : "모든 지하철 구간 막차 도달 가능";
   return "";
 }

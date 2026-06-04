@@ -1,3 +1,39 @@
+function haversineKm(x1, y1, x2, y2) {
+  const R = 6371;
+  const dLat = ((y2 - y1) * Math.PI) / 180;
+  const dLon = ((x2 - x1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((y1 * Math.PI) / 180) *
+      Math.cos((y2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+export function estimateTaxiFare({ startX, startY, endX, endY }) {
+  const straightKm = haversineKm(
+    parseFloat(startX), parseFloat(startY),
+    parseFloat(endX), parseFloat(endY)
+  );
+  const roadKm = straightKm * 1.3;
+
+  const BASE_FARE = 4800;
+  const BASE_KM = 1.6;
+  let fare = BASE_FARE;
+  if (roadKm > BASE_KM) {
+    fare += Math.floor(((roadKm - BASE_KM) * 1000) / 131) * 100;
+  }
+  const nightFare = Math.ceil(fare * 1.2 / 100) * 100;
+  const durationMinutes = Math.max(5, Math.round((roadKm / 30) * 60));
+
+  return {
+    distanceKm: Math.round(roadKm * 10) / 10,
+    estimatedFare: fare,
+    estimatedFareNight: nightFare,
+    durationMinutes,
+  };
+}
+
 function getCurrentTime() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, "0");
