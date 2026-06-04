@@ -194,6 +194,8 @@ async function validateTransitRouteHandler({ legs, departureTime, endX, endY, fi
   if (!firstBlock) return { results, hasInfeasibleLegs: false, lastReachableStation: null, altRoute: null };
 
   let altRoute = null;
+  let lastReachableX = null;
+  let lastReachableY = null;
   try {
     const kakaoRes = await fetch(
       `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(firstBlock.station + "역")}`,
@@ -202,6 +204,8 @@ async function validateTransitRouteHandler({ legs, departureTime, endX, endY, fi
     const kakaoData = await kakaoRes.json();
     const place = kakaoData.documents?.[0];
     if (place) {
+      lastReachableX = place.x;
+      lastReachableY = place.y;
       altRoute = await searchTransitRoute({ startX: place.x, startY: place.y, endX, endY });
     }
   } catch {
@@ -212,6 +216,8 @@ async function validateTransitRouteHandler({ legs, departureTime, endX, endY, fi
     results,
     hasInfeasibleLegs: true,
     lastReachableStation: firstBlock.station,
+    lastReachableX,
+    lastReachableY,
     blockReason: firstBlock.reason,
     altRoute,
   };
