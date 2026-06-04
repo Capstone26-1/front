@@ -212,6 +212,8 @@ async function validateTransitRouteHandler({ legs, departureTime, endX, endY, fi
     // 재탐색 실패 시 null — Claude가 택시 대안으로 처리
   }
 
+  const latestSafeDeparture = results.find(r => !r.feasible)?.latestSafeDeparture ?? null;
+
   return {
     results,
     hasInfeasibleLegs: true,
@@ -219,6 +221,7 @@ async function validateTransitRouteHandler({ legs, departureTime, endX, endY, fi
     lastReachableX,
     lastReachableY,
     blockReason: firstBlock.reason,
+    latestSafeDeparture,
     altRoute,
   };
 }
