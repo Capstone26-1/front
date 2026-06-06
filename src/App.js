@@ -1,189 +1,27 @@
-/**
- * 막차 실패 위험 이상탐지 — 프론트엔드 목업 (다크 / 채팅형)
- *
- * 홈: Claude 스타일 단일 질문창 + 추천 질문 칩 3개
- * 응답: 채팅 카드 안에 "Goal Manager 파싱 → 결과" 통합 표시
- * Workflow: 우측 슬라이드 패널로 토글
- *
- * 시나리오 토글 (헤더 우상단)
- *   - 자동(기본): 사용자 질문 키워드로 시나리오 자동 판정
- *   - 정상/위험/비: 발표 시연용 강제 모드
- *
- * 백엔드 연결 시 SCENARIOS 더미 데이터는 POST /api/analyze 응답으로 교체.
- */
+// 막차 실패 위험 이상탐지 — Claude Agent + Tmap + Kakao
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-
-// ───────────────────── 시나리오별 더미 데이터 ─────────────────────
-
-const SCENARIOS = {
-  normal: {
-    label: "정상",
-    parsed: { origin: "강남역", destination: "사당역", situation: "정상", time: "2026-05-25 23:42" },
-    result: {
-      verdict: "안전",
-      verdictTone: "emerald",
-      riskScore: 0,
-      anomalyType: "정상",
-      confidence: 0.92,
-      headline: "막차까지 21분 여유 — 현재 노선으로 충분합니다.",
-      reasons: [
-        { label: "여유 시간", value: "21.0분", weight: "+0", tone: "good" },
-        { label: "실시간 지연", value: "없음", weight: "+0", tone: "good" },
-      ],
-      recommendations: [
-        "현재 143번 경로(강남→사당) 그대로 이용 가능합니다.",
-        "혹시 모를 지연 대비 23:55 전 출발을 권장합니다.",
-      ],
-      toolsUsed: ["last_transport_time_tool", "live_arrival_tool", "risk_score_tool"],
-    },
-    stats: { tools: 3, replans: 0, criticOk: 1, criticNg: 0, durationMs: 1240 },
-    workflow: [
-      { kind: "goal", body: "강남 → 사당 막차 가능 여부 판단" },
-      { kind: "plan", title: "Plan #1", body: "기본 경로 + 막차 시간 + 위험 점수" },
-      { kind: "tool", tool: "last_transport_time_tool", result: "막차까지 28분, 환승 도보 0분" },
-      { kind: "tool", tool: "live_arrival_tool", result: "143번 7분 후 도착, 지연 없음" },
-      { kind: "tool", tool: "risk_score_tool", result: "slack 21.0분 → 0점 / 정상" },
-      { kind: "critic", body: "정보 충분, 정상 판정.", decision: "ok" },
-      { kind: "final", body: "막차 안전. 추가 분석 불필요." },
-    ],
-  },
-
-  delay: {
-    label: "위험",
-    parsed: {
-      origin: "강남역(추정)",
-      destination: "사당역(추정)",
-      situation: "버스 장시간 미도착 → 막차 실패 위험 호소",
-      time: "2026-05-25 23:58",
-    },
-    result: {
-      verdict: "매우 위험",
-      verdictTone: "rose",
-      riskScore: 100,
-      anomalyType: "막차 실패 위험 (매우 높음)",
-      confidence: 0.81,
-      headline: "기존 노선 막차 실패 가능성 매우 높음 — 2호선 직통 권장.",
-      reasons: [
-        { label: "여유 시간", value: "-10.0분", weight: "+90", tone: "bad" },
-        { label: "실시간 지연", value: "12분", weight: "+20", tone: "bad" },
-        { label: "강수", value: "비 1.5mm", weight: "+10", tone: "warn" },
-        { label: "도로 사고", value: "중간 심각도", weight: "+20", tone: "bad" },
-      ],
-      recommendations: [
-        "기존 143번 경로는 막차 실패 가능성 매우 높음 — 비추천.",
-        "지하철 2호선 강남→사당 직통(약 18분) 권장. 막차까지 27분 여유.",
-        "버스+택시 조합도 가능하나 비용 약 9,800원.",
-      ],
-      toolsUsed: [
-        "live_arrival_tool",
-        "last_transport_time_tool",
-        "risk_score_tool",
-        "traffic_incident_tool",
-        "weather_tool",
-        "alternative_route_tool",
-      ],
-    },
-    stats: { tools: 7, replans: 1, criticOk: 1, criticNg: 1, durationMs: 3680 },
-    workflow: [
-      { kind: "goal", body: "버스 지연 호소 → 막차 실패 위험 판정" },
-      { kind: "plan", title: "Plan #1", body: "실시간 상태 확인 우선" },
-      { kind: "tool", tool: "live_arrival_tool", result: "143번 18분 후, 12분 지연" },
-      { kind: "tool", tool: "last_transport_time_tool", result: "막차까지 12분, 환승 4분" },
-      { kind: "tool", tool: "risk_score_tool", result: "slack -10.0분 → 90점" },
-      { kind: "critic", body: "위험은 확실. 그러나 원인/대체경로 정보 부족.", decision: "ng",
-        missing: ["traffic_incident", "weather", "alternative_route"] },
-      { kind: "replan", body: "새 sub-goal: 지연 원인 분석 + 대체 경로 탐색" },
-      { kind: "plan", title: "Plan #2", body: "원인 진단 후 대안 제시" },
-      { kind: "tool", tool: "traffic_incident_tool", result: "강남대로 사고 (중간 심각도)" },
-      { kind: "tool", tool: "weather_tool", result: "비 1.5mm, 노면 미끄러움" },
-      { kind: "tool", tool: "alternative_route_tool", result: "2호선 직통 권장 (18분)" },
-      { kind: "tool", tool: "risk_score_tool", result: "재계산: 100점 (cap)" },
-      { kind: "critic", body: "원인 + 대체경로 확보. 정보 충분.", decision: "ok" },
-      { kind: "final", body: "막차 실패 위험. 2호선 권장." },
-    ],
-  },
-
-  rain: {
-    label: "비",
-    parsed: {
-      origin: "강남역(추정)",
-      destination: "사당역(추정)",
-      situation: "강수 중 — 비 영향 우려",
-      time: "2026-05-25 23:30",
-    },
-    result: {
-      verdict: "주의",
-      verdictTone: "sky",
-      riskScore: 10,
-      anomalyType: "정상",
-      confidence: 0.87,
-      headline: "막차 여유 충분. 비 영향으로 약간의 지연 가능.",
-      reasons: [
-        { label: "여유 시간", value: "28.0분", weight: "+0", tone: "good" },
-        { label: "강수", value: "비 5.2mm", weight: "+10", tone: "warn" },
-      ],
-      recommendations: [
-        "막차까지 여유 충분합니다. 다만 비 영향 약간의 지연 가능.",
-        "지하철 2호선이 실내 환승으로 비 영향 가장 적습니다.",
-      ],
-      toolsUsed: [
-        "weather_tool",
-        "last_transport_time_tool",
-        "live_arrival_tool",
-        "risk_score_tool",
-      ],
-    },
-    stats: { tools: 4, replans: 0, criticOk: 1, criticNg: 0, durationMs: 1620 },
-    workflow: [
-      { kind: "goal", body: "비 영향 고려한 막차 가능 여부 판단" },
-      { kind: "plan", title: "Plan #1", body: "발화에 '비' 키워드 → weather 우선" },
-      { kind: "tool", tool: "weather_tool", result: "비 5.2mm, 강수확률 95%" },
-      { kind: "tool", tool: "last_transport_time_tool", result: "막차까지 40분, 도보 3분" },
-      { kind: "tool", tool: "live_arrival_tool", result: "143번 9분 후, 3분 지연" },
-      { kind: "tool", tool: "risk_score_tool", result: "slack 28.0분 + 비 → 10점" },
-      { kind: "critic", body: "정보 충분. 위험 낮으나 비 영향 안내 필요.", decision: "ok" },
-      { kind: "final", body: "막차 가능. 우산/지하철 권장." },
-    ],
-  },
-};
+import { runAgent } from "./api/agent";
 
 const TOOL_REGISTRY = [
-  { name: "live_arrival_tool", desc: "실시간 도착 정보" },
-  { name: "last_transport_time_tool", desc: "막차 시간 / 경로 옵션" },
-  { name: "weather_tool", desc: "강수 · 강설 · 기온" },
-  { name: "traffic_incident_tool", desc: "사고 · 공사 · 통제" },
-  { name: "risk_score_tool", desc: "위험 점수 + Anomaly Type" },
-  { name: "alternative_route_tool", desc: "대체 경로" },
-  { name: "route_search_tool", desc: "경로 후보 일반 검색" },
-  { name: "bus_location_tool", desc: "차량 위치" },
-  { name: "explanation_tool", desc: "최종 자연어 설명" },
+  { name: "search_location",         desc: "장소명 → 위경도 좌표 (Kakao)" },
+  { name: "search_transit_route",    desc: "대중교통 경로 탐색 (Tmap)" },
+  { name: "weather_alert_tool",      desc: "기상 특보 · 강수 위험도 (기상청)" },
+  { name: "road_incident_tool",      desc: "도로 돌발상황 · 통제 (국토부 ITS)" },
+  { name: "transit_disruption_tool", desc: "지하철 실시간 지연 · 혼잡 (서울)" },
+  { name: "public_event_tool",       desc: "대형 행사 혼잡 · 관중 (Demo)" },
+  { name: "news_context_tool",       desc: "교통 이슈 원인 뉴스 검색 (네이버)" },
 ];
 
 const SUGGESTIONS = [
-  { query: "지금 강남역에서 사당역까지 막차 탈 수 있어?", scenario: "normal" },
-  { query: "버스가 20분째 안 오는데 막차 놓치는 거 아니야?", scenario: "delay" },
-  { query: "비 오는데 지금 출발해도 막차 가능해?", scenario: "rain" },
+  { query: "지금 강남역에서 사당역까지 막차 탈 수 있어?" },
+  { query: "버스가 20분째 안 오는데 막차 놓치는 거 아니야?" },
+  { query: "비 오는데 지금 출발해도 막차 가능해?" },
 ];
-
-// ───────────────────── 시나리오 자동 판정 ─────────────────────
-
-function detectScenario(text) {
-  if (/안\s?와|안와|지연|늦|놓치/.test(text)) return "delay";
-  if (/비|눈|우산|장마|폭우/.test(text)) return "rain";
-  return "normal";
-}
 
 // ───────────────────── 헤더 ─────────────────────
 
-function Header({ scenario, setScenario, onToggleWorkflow, workflowOpen, hasMessages, onReset }) {
-  const opts = [
-    { id: "auto", label: "자동" },
-    { id: "normal", label: "정상" },
-    { id: "delay", label: "위험" },
-    { id: "rain", label: "비" },
-  ];
-
+function Header({ onToggleWorkflow, workflowOpen, hasMessages, onReset }) {
   return (
     <header className="bg-slate-950/80 backdrop-blur border-b border-slate-800 sticky top-0 z-20">
       <div className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-4">
@@ -193,32 +31,12 @@ function Header({ scenario, setScenario, onToggleWorkflow, workflowOpen, hasMess
           </div>
           <div className="text-left">
             <div className="text-sm font-semibold text-slate-100">막차 위험탐지 Agent</div>
-            <div className="text-xs text-slate-500">MCP · Dynamic Workflow</div>
+            <div className="text-xs text-slate-500">Claude · Tmap · Kakao</div>
           </div>
         </button>
 
-        <div className="ml-auto flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500">시나리오</span>
-            <div className="flex rounded-md border border-slate-800 overflow-hidden bg-slate-900">
-              {opts.map((o) => (
-                <button
-                  key={o.id}
-                  onClick={() => setScenario(o.id)}
-                  className={
-                    "px-3 py-1.5 text-xs transition " +
-                    (scenario === o.id
-                      ? "bg-slate-100 text-slate-900 font-medium"
-                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800")
-                  }
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {hasMessages && (
+        {hasMessages && (
+          <div className="ml-auto">
             <button
               onClick={onToggleWorkflow}
               className={
@@ -232,8 +50,8 @@ function Header({ scenario, setScenario, onToggleWorkflow, workflowOpen, hasMess
               <span className="text-base leading-none">⏿</span>
               Workflow
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </header>
   );
@@ -249,7 +67,7 @@ function Hero({ onSend, onSuggestion }) {
       <div className="text-center">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-400">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          MCP Tool Server 5개 연결됨
+          MCP Tool Server 7개 연결됨
         </div>
         <h1 className="mt-6 text-4xl font-semibold text-slate-100 tracking-tight">
           오늘 막차, 안전하게 탈 수 있을까요?
@@ -273,7 +91,7 @@ function Hero({ onSend, onSuggestion }) {
               className="text-left px-4 py-3 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-600 hover:bg-slate-800/60 transition"
             >
               <div className="text-sm text-slate-200 leading-relaxed">{s.query}</div>
-              <div className="mt-2 text-xs text-slate-500">시나리오: {SCENARIOS[s.scenario].label}</div>
+
             </button>
           ))}
         </div>
@@ -345,7 +163,7 @@ function SendIcon() {
 
 // ───────────────────── 채팅 메시지들 ─────────────────────
 
-function ChatList({ messages, isLoading, onOpenWorkflow, scrollRef }) {
+function ChatList({ messages, isLoading, liveWorkflow, onOpenWorkflow, scrollRef }) {
   return (
     <div className="max-w-3xl mx-auto px-6 pt-8 pb-40 space-y-6">
       {messages.map((m, i) =>
@@ -355,7 +173,7 @@ function ChatList({ messages, isLoading, onOpenWorkflow, scrollRef }) {
           <AssistantMessage key={i} data={m} onOpenWorkflow={onOpenWorkflow} />
         )
       )}
-      {isLoading && <LoadingMessage />}
+      {isLoading && <LoadingMessage steps={liveWorkflow} />}
       <div ref={scrollRef} />
     </div>
   );
@@ -371,15 +189,54 @@ function UserMessage({ text }) {
   );
 }
 
-function LoadingMessage() {
+const STEP_CONFIG = {
+  goal:   { icon: "◎", color: "text-indigo-400",  label: (s) => "Goal" },
+  plan:   { icon: "◈", color: "text-blue-400",    label: (s) => s.title || "Plan" },
+  tool:   { icon: "⚙", color: "text-slate-400",   label: (s) => s.tool },
+  critic: { icon: "✓", color: "text-emerald-400", label: (s) => s.decision === "ok" ? "Critic ✓" : "Critic ⚠" },
+  replan: { icon: "↻", color: "text-orange-400",  label: (s) => "Re-plan" },
+  final:  { icon: "★", color: "text-indigo-400",  label: (s) => "Final" },
+};
+
+function LiveStep({ step }) {
+  const cfg = STEP_CONFIG[step.kind] || { icon: "•", color: "text-slate-400", label: () => step.kind };
   return (
-    <div className="flex items-center gap-3 text-slate-400 text-sm">
-      <div className="flex gap-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: "0ms" }} />
-        <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: "120ms" }} />
-        <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: "240ms" }} />
+    <div className="flex items-start gap-2 text-xs text-slate-400 py-0.5">
+      <span className={cfg.color + " font-mono shrink-0 mt-0.5"}>{cfg.icon}</span>
+      <div className="min-w-0">
+        <span className="font-medium text-slate-300">{cfg.label(step)}</span>
+        {step.body && <span className="ml-1 text-slate-500 truncate">{step.body}</span>}
+        {step.result && <span className="ml-1 text-slate-600">→ {step.result}</span>}
       </div>
-      <span>Agent가 Tool들을 호출하는 중...</span>
+    </div>
+  );
+}
+
+function LoadingMessage({ steps = [] }) {
+  return (
+    <div className="space-y-1">
+      {steps.map((step, i) => <LiveStep key={i} step={step} />)}
+      <div className="flex items-center gap-3 text-slate-400 text-sm pt-1">
+        <div className="flex gap-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: "0ms" }} />
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: "120ms" }} />
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: "240ms" }} />
+        </div>
+        <span>Agent가 Tool들을 호출하는 중...</span>
+      </div>
+    </div>
+  );
+}
+
+function ChatBubbleMessage({ r }) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="shrink-0 w-8 h-8 rounded-lg bg-indigo-500/90 flex items-center justify-center text-white font-bold text-sm">
+        막
+      </div>
+      <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-tl-md bg-slate-800 text-slate-100 text-sm leading-relaxed">
+        {r.headline}
+      </div>
     </div>
   );
 }
@@ -388,6 +245,8 @@ function LoadingMessage() {
 function AssistantMessage({ data, onOpenWorkflow }) {
   const r = data.result;
   const parsed = data.parsed;
+
+  if (r?.verdict === "대화") return <ChatBubbleMessage r={r} />;
 
   const verdictToneMap = {
     emerald: "bg-emerald-500/10 border-emerald-500/30 text-emerald-300",
@@ -413,10 +272,10 @@ function AssistantMessage({ data, onOpenWorkflow }) {
           <span className="text-slate-600">(Goal Manager)</span>
         </div>
         <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-          <ParsedField label="출발지" value={parsed.origin} />
-          <ParsedField label="목적지" value={parsed.destination} />
-          <ParsedField label="시각" value={parsed.time} />
-          <ParsedField label="상황" value={parsed.situation} highlight />
+          <ParsedField label="출발지" value={parsed?.origin} />
+          <ParsedField label="목적지" value={parsed?.destination} />
+          <ParsedField label="시각" value={parsed?.time} />
+          <ParsedField label="상황" value={parsed?.situation} highlight />
         </div>
       </div>
 
@@ -436,6 +295,12 @@ function AssistantMessage({ data, onOpenWorkflow }) {
           <div className="text-lg font-semibold text-slate-100">{(r.confidence * 100).toFixed(0)}%</div>
         </div>
       </div>
+
+      {/* 추천 경로 & 요금 */}
+      <RouteCard routes={r.routes} taxiSuggestion={r.taxiSuggestion} latestSafeDeparture={r.latestSafeDeparture} />
+
+      {/* 택시 대안 */}
+      <TaxiCard taxi={r.taxiSuggestion} />
 
       {/* 점수 분해 + 추천 행동 (2단) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -524,6 +389,179 @@ function ScoreChip({ weight, tone }) {
     bad: "bg-rose-500/15 text-rose-300",
   };
   return <span className={"px-2.5 py-1 rounded-md text-sm font-mono " + toneMap[tone]}>{weight}점</span>;
+}
+
+// ───────────────────── 추천 경로 & 요금 ─────────────────────
+
+const MODE_STYLE = {
+  WALK:       { icon: "🚶", label: "도보",   cls: "bg-slate-700/50 text-slate-300" },
+  BUS:        { icon: "🚌", label: "버스",   cls: "bg-emerald-500/20 text-emerald-300" },
+  SUBWAY:     { icon: "🚇", label: "지하철", cls: "bg-indigo-500/20 text-indigo-300" },
+  TRAIN:      { icon: "🚆", label: "기차",   cls: "bg-blue-500/20 text-blue-300" },
+  EXPRESSBUS: { icon: "🚍", label: "고속버스", cls: "bg-amber-500/20 text-amber-300" },
+  AIRPLANE:   { icon: "✈️", label: "항공",   cls: "bg-sky-500/20 text-sky-300" },
+  TAXI:       { icon: "🚕", label: "택시",   cls: "bg-yellow-500/20 text-yellow-300" },
+};
+
+function modeStyle(mode) {
+  return MODE_STYLE[mode] || { icon: "•", label: mode || "이동", cls: "bg-slate-700/50 text-slate-300" };
+}
+
+function formatFare(fare) {
+  if (fare == null || fare === 0) return "요금 정보 없음";
+  return `${Number(fare).toLocaleString()}원`;
+}
+
+function RouteCard({ routes, taxiSuggestion, latestSafeDeparture }) {
+  if (!routes || routes.length === 0) return null;
+  const hasInfeasible = taxiSuggestion?.available;
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+      <div className="flex items-center gap-2">
+        <span className="text-indigo-400">🧭</span>
+        <span className="text-sm font-semibold text-slate-200">추천 경로 & 요금</span>
+        <span className="text-xs text-slate-500">Tmap 대중교통</span>
+      </div>
+
+      <div className="mt-3 space-y-2.5">
+        {hasInfeasible && <TaxiRouteRow taxi={taxiSuggestion} />}
+        {routes.map((route, i) => (
+          <RouteRow
+            key={i}
+            route={route}
+            recommended={i === 0}
+            infeasible={hasInfeasible}
+            latestSafeDeparture={i === 0 ? latestSafeDeparture : null}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TaxiRouteRow({ taxi }) {
+  return (
+    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/30 text-amber-200">
+          현재 대안
+        </span>
+        <span className="text-sm font-semibold text-slate-100">지하철 + 택시</span>
+        <span className="ml-auto text-sm font-semibold text-amber-300">
+          ~{Number(taxi.estimatedFare).toLocaleString()}원
+          <span className="text-xs text-amber-500/70 ml-1">(심야 ~{Number(taxi.estimatedFareNight).toLocaleString()}원)</span>
+        </span>
+      </div>
+      <div className="mt-2 flex items-center gap-1 flex-wrap">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-slate-700/60 text-slate-300">
+          <span>🚇</span>
+          <span className="font-medium">지하철 최대 이용</span>
+        </span>
+        <span className="text-slate-600 text-xs">›</span>
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-amber-500/20 text-amber-300">
+          <span>🚕</span>
+          <span className="font-medium">{taxi.fromName} → {taxi.toName}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function RouteRow({ route, recommended, infeasible, latestSafeDeparture }) {
+  const legs = (route.legs || []).filter((l) => l.mode !== "WALK" || (l.durationMinutes || 0) >= 2);
+  const showEarlierBadge = recommended && infeasible;
+
+  return (
+    <div
+      className={
+        "rounded-lg border px-3 py-2.5 " +
+        (showEarlierBadge
+          ? "border-amber-700/30 bg-amber-900/10"
+          : recommended
+          ? "border-indigo-500/40 bg-indigo-500/10"
+          : "border-slate-800 bg-slate-950/40")
+      }
+    >
+      <div className="flex items-center gap-2 flex-wrap">
+        {showEarlierBadge ? (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-700/30 text-amber-300">
+            출발 앞당기기 시
+          </span>
+        ) : recommended ? (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/30 text-indigo-200">
+            추천
+          </span>
+        ) : (
+          <span className="text-xs text-slate-500">경로 {route.rank}</span>
+        )}
+        <span className="text-sm font-semibold text-slate-100">{route.totalTimeMinutes}분</span>
+        <span className="text-xs text-slate-500">환승 {route.transferCount}회</span>
+        <span className="ml-auto text-sm font-semibold text-emerald-300">{formatFare(route.totalFare)}</span>
+      </div>
+
+      {showEarlierBadge && latestSafeDeparture && (
+        <div className="mt-1 text-[11px] text-amber-500/80">※ {latestSafeDeparture} 이전 출발 필요</div>
+      )}
+
+      <div className="mt-2 flex items-center gap-1 flex-wrap">
+        {legs.map((leg, i) => {
+          const s = modeStyle(leg.mode);
+          return (
+            <React.Fragment key={i}>
+              {i > 0 && <span className="text-slate-600 text-xs">›</span>}
+              <span
+                className={"inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs " + s.cls}
+                title={leg.fromName && leg.toName ? `${leg.fromName} → ${leg.toName}` : undefined}
+              >
+                <span>{s.icon}</span>
+                <span className="font-medium">{leg.routeName || s.label}</span>
+              </span>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TaxiCard({ taxi }) {
+  if (!taxi?.available) return null;
+  return (
+    <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-yellow-400">🚕</span>
+        <span className="text-sm font-semibold text-yellow-200">택시 대안</span>
+        <span className="text-xs text-yellow-500/70 ml-auto">대중교통 막차 종료</span>
+      </div>
+      <div className="flex items-center gap-2 text-sm text-slate-200 mb-2">
+        <span className="font-medium text-yellow-300">{taxi.fromName}</span>
+        <span className="text-slate-500">→</span>
+        <span className="font-medium text-yellow-300">{taxi.toName}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs text-slate-400">
+        <div>
+          <div className="text-slate-500">예상 요금</div>
+          <div className="text-slate-200 font-semibold">~{Number(taxi.estimatedFare).toLocaleString()}원</div>
+        </div>
+        <div>
+          <div className="text-slate-500">심야 요금 (22~02시)</div>
+          <div className="text-yellow-300 font-semibold">~{Number(taxi.estimatedFareNight).toLocaleString()}원</div>
+        </div>
+        <div>
+          <div className="text-slate-500">예상 소요</div>
+          <div className="text-slate-200 font-semibold">약 {taxi.durationMinutes}분</div>
+        </div>
+        <div>
+          <div className="text-slate-500">거리</div>
+          <div className="text-slate-200 font-semibold">{taxi.distanceKm}km</div>
+        </div>
+      </div>
+      {taxi.reason && (
+        <div className="mt-2 text-xs text-yellow-500/80 border-t border-yellow-500/20 pt-2">{taxi.reason}</div>
+      )}
+    </div>
+  );
 }
 
 // ───────────────────── Workflow 슬라이드 패널 ─────────────────────
@@ -716,14 +754,38 @@ function ToolRegistryList({ usedTools }) {
   );
 }
 
+// ───────────────────── 대화 히스토리 변환 ─────────────────────
+
+// 화면의 메시지 목록을 Claude API 메시지 형식으로 변환한다.
+// assistant 응답은 핵심 판정만 요약해 다음 요청의 맥락으로 전달한다.
+function buildHistory(messages) {
+  return messages.map((m) => {
+    if (m.role === "user") {
+      return { role: "user", content: m.content };
+    }
+    const r = m.result || {};
+    const p = m.parsed || {};
+    if (r.verdict === "대화") {
+      return { role: "assistant", content: r.headline || "" };
+    }
+    const parts = [
+      p.origin && p.destination ? `경로: ${p.origin} → ${p.destination}` : null,
+      r.verdict ? `판정: ${r.verdict}(위험도 ${r.riskScore})` : null,
+      r.headline ? `요약: ${r.headline}` : null,
+    ].filter(Boolean);
+    return { role: "assistant", content: `[이전 분석] ${parts.join(" / ")}` };
+  });
+}
+
 // ───────────────────── App ─────────────────────
 
 export default function App() {
-  const [scenario, setScenario] = useState("auto"); // auto | normal | delay | rain
   const [messages, setMessages] = useState([]);
   const [followup, setFollowup] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [workflowOpen, setWorkflowOpen] = useState(false);
+  const [liveWorkflow, setLiveWorkflow] = useState([]);
+  const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   const bottomRef = useRef(null);
 
   const lastAssistant = useMemo(
@@ -737,29 +799,39 @@ export default function App() {
     }
   }, [messages, isLoading]);
 
-  const handleSend = (text) => {
-    const scen = scenario === "auto" ? detectScenario(text) : scenario;
+  const handleSend = async (text) => {
+    // 현재까지의 대화를 Claude 메시지 형식으로 변환해 맥락을 유지한다.
+    const history = buildHistory(messages);
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setIsLoading(true);
-    setTimeout(() => {
-      const d = SCENARIOS[scen];
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          scenarioKey: scen,
-          parsed: d.parsed,
-          result: d.result,
-          workflow: d.workflow,
-          stats: d.stats,
-        },
-      ]);
+    setLiveWorkflow([]);
+    setWorkflowOpen(false);
+
+    try {
+      const result = await runAgent(text, history, (step) => {
+        setLiveWorkflow((prev) => [...prev, step]);
+      }, sessionId);
+      if (result) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            parsed: result.parsed,
+            result: result.result,
+            workflow: result.workflow,
+            stats: result.stats,
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error("Agent 오류:", err);
+    } finally {
       setIsLoading(false);
-    }, 900);
+      setLiveWorkflow([]);
+    }
   };
 
   const handleSuggestion = (s) => {
-    if (scenario !== "auto") setScenario("auto"); // 추천칩 클릭 시 자동 모드로 복귀
     handleSend(s.query);
   };
 
@@ -767,6 +839,7 @@ export default function App() {
     setMessages([]);
     setFollowup("");
     setWorkflowOpen(false);
+    setSessionId(crypto.randomUUID());
   };
 
   const hasMessages = messages.length > 0;
@@ -781,8 +854,6 @@ export default function App() {
       `}</style>
 
       <Header
-        scenario={scenario}
-        setScenario={setScenario}
         onToggleWorkflow={() => setWorkflowOpen((v) => !v)}
         workflowOpen={workflowOpen}
         hasMessages={hasMessages}
@@ -795,6 +866,7 @@ export default function App() {
         <ChatList
           messages={messages}
           isLoading={isLoading}
+          liveWorkflow={liveWorkflow}
           onOpenWorkflow={() => setWorkflowOpen(true)}
           scrollRef={bottomRef}
         />
