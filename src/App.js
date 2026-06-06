@@ -241,8 +241,10 @@ function ChatBubbleMessage({ r }) {
   );
 }
 
-// 메인 어시스턴트 응답 카드: Goal Manager + 결과 카드 + 점수 분해 + 추천 + Tools + Workflow 버튼
+
+// 메인 어시스턴트 응답 카드: Goal Manager + 결과 카드 + 추천 경로 + 왜 위험한가 + 추천 행동
 function AssistantMessage({ data, onOpenWorkflow }) {
+  const [selectedRouteIdx, setSelectedRouteIdx] = useState(0);
   const r = data.result;
   const parsed = data.parsed;
 
@@ -261,6 +263,38 @@ function AssistantMessage({ data, onOpenWorkflow }) {
   };
   const scoreTone =
     r.riskScore >= 60 ? "rose" : r.riskScore >= 30 ? "amber" : r.riskScore > 0 ? "sky" : "emerald";
+
+  const routes = r.routes || [];
+  const selectedRoute = routes[selectedRouteIdx] ?? routes[0] ?? null;
+
+  // 선택된 경로의 구간 정보를 추천 행동 단계로 변환
+  const routeSteps = selectedRoute
+    ? (selectedRoute.legs || [])
+        .filter((l) => l.mode !== "WALK" || (l.durationMinutes || 0) >= 2)
+        .map((leg) => {
+          const s = modeStyle(leg.mode);
+          const time = leg.departureTime ? ` (${leg.departureTime} 출발)` : leg.durationMinutes ? ` (${leg.durationMinutes}분)` : "";
+          return `${s.icon} ${leg.routeName || s.label}: ${leg.fromName} → ${leg.toName}${time}`;
+        })
+    : [];
+
+  // 선택된 경로 기반 추가 분석 항목
+  const routeReasons = selectedRoute
+    ? [
+        {
+          label: "선택 경로 소요시간",
+          value: `${selectedRoute.totalTimeMinutes}분 (환승 ${selectedRoute.transferCount}회)`,
+          weight: selectedRoute.totalTimeMinutes > 45 ? "+15" : selectedRoute.totalTimeMinutes > 30 ? "+5" : "+0",
+          tone: selectedRoute.totalTimeMinutes > 45 ? "bad" : selectedRoute.totalTimeMinutes > 30 ? "warn" : "good",
+        },
+        {
+          label: "예상 요금",
+          value: formatFare(selectedRoute.totalFare),
+          weight: "+0",
+          tone: "good",
+        },
+      ]
+    : [];
 
   return (
     <div className="space-y-3">
@@ -296,17 +330,26 @@ function AssistantMessage({ data, onOpenWorkflow }) {
         </div>
       </div>
 
-      {/* 추천 경로 & 요금 */}
-      <RouteCard routes={r.routes} taxiSuggestion={r.taxiSuggestion} latestSafeDeparture={r.latestSafeDeparture} />
+      {/* 추천 경로 선택 */}
+      {routes.length > 0 && (
+        <RouteSelector
+          routes={routes}
+          selectedIdx={selectedRouteIdx}
+          onSelect={setSelectedRouteIdx}
+          taxiSuggestion={r.taxiSuggestion}
+          latestSafeDeparture={r.latestSafeDeparture}
+        />
+      )}
+
 
       {/* 택시 대안 */}
       <TaxiCard taxi={r.taxiSuggestion} />
 
-      {/* 점수 분해 + 추천 행동 (2단) */}
+      {/* 점수 분해 + 추천 행동 — 선택된 경로 기준 */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <SectionCard title="왜 위험한가" subtitle="slack = 막차까지 − 도착 예정 − 환승 도보">
           <ul className="space-y-2.5">
-            {r.reasons.map((row, i) => (
+            {[...routeReasons, ...r.reasons].map((row, i) => (
               <li key={i} className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium text-slate-200">{row.label}</div>
@@ -320,15 +363,18 @@ function AssistantMessage({ data, onOpenWorkflow }) {
 
         <SectionCard title="추천 행동">
           <ul className="space-y-2.5">
-            {r.recommendations.map((rec, i) => (
-              <li key={i} className="flex gap-3 text-sm text-slate-300 leading-relaxed">
-                <div
-                  className={
-                    "shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold " +
-                    (i === 0 ? "bg-indigo-500/20 text-indigo-300" : "bg-slate-800 text-slate-400")
-                  }
-                >
+            {routeSteps.map((step, i) => (
+              <li key={`step-${i}`} className="flex gap-3 text-sm text-slate-300 leading-relaxed">
+                <div className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold bg-indigo-500/20 text-indigo-300">
                   {i + 1}
+                </div>
+                <div>{step}</div>
+              </li>
+            ))}
+            {r.recommendations.map((rec, i) => (
+              <li key={`rec-${i}`} className="flex gap-3 text-sm text-slate-300 leading-relaxed">
+                <div className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold bg-slate-800 text-slate-400">
+                  {routeSteps.length + i + 1}
                 </div>
                 <div>{rec}</div>
               </li>
@@ -348,7 +394,7 @@ function AssistantMessage({ data, onOpenWorkflow }) {
           ))}
         </div>
         <button
-          onClick={onOpenWorkflow}
+          onClick={() => onOpenWorkflow(data)}
           className="ml-auto text-xs text-indigo-300 hover:text-indigo-200 font-medium"
         >
           Workflow 분석 →
@@ -412,25 +458,27 @@ function formatFare(fare) {
   return `${Number(fare).toLocaleString()}원`;
 }
 
-function RouteCard({ routes, taxiSuggestion, latestSafeDeparture }) {
+function RouteSelector({ routes, selectedIdx, onSelect, taxiSuggestion, latestSafeDeparture }) {
   if (!routes || routes.length === 0) return null;
   const hasInfeasible = taxiSuggestion?.available;
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 mb-3">
         <span className="text-indigo-400">🧭</span>
         <span className="text-sm font-semibold text-slate-200">추천 경로 & 요금</span>
-        <span className="text-xs text-slate-500">Tmap 대중교통</span>
+        <span className="text-xs text-slate-500">Tmap 대중교통 · 클릭해서 선택</span>
       </div>
 
-      <div className="mt-3 space-y-2.5">
+      <div className="space-y-2">
         {hasInfeasible && <TaxiRouteRow taxi={taxiSuggestion} />}
         {routes.map((route, i) => (
           <RouteRow
             key={i}
             route={route}
             recommended={i === 0}
+            selected={i === selectedIdx}
+            onSelect={() => onSelect(i)}
             infeasible={hasInfeasible}
             latestSafeDeparture={i === 0 ? latestSafeDeparture : null}
           />
@@ -468,32 +516,33 @@ function TaxiRouteRow({ taxi }) {
   );
 }
 
-function RouteRow({ route, recommended, infeasible, latestSafeDeparture }) {
+function RouteRow({ route, recommended, infeasible, latestSafeDeparture, selected, onSelect }) {
   const legs = (route.legs || []).filter((l) => l.mode !== "WALK" || (l.durationMinutes || 0) >= 2);
   const showEarlierBadge = recommended && infeasible;
 
   return (
     <div
+      onClick={onSelect}
       className={
-        "rounded-lg border px-3 py-2.5 " +
-        (showEarlierBadge
-          ? "border-amber-700/30 bg-amber-900/10"
-          : recommended
-          ? "border-indigo-500/40 bg-indigo-500/10"
-          : "border-slate-800 bg-slate-950/40")
+        "rounded-lg border px-3 py-2.5 cursor-pointer transition-all " +
+        (selected
+          ? "border-indigo-400 bg-indigo-500/20 ring-2 ring-indigo-500/40"
+          : "border-slate-700 bg-slate-900/40 hover:border-slate-600 hover:bg-slate-800/40 opacity-60 hover:opacity-80")
       }
     >
       <div className="flex items-center gap-2 flex-wrap">
-        {showEarlierBadge ? (
+        {selected && (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500 text-white">
+            선택됨
+          </span>
+        )}
+        {!selected && (
+          <span className="text-xs text-slate-500">경로 {route.rank}</span>
+        )}
+        {showEarlierBadge && (
           <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-700/30 text-amber-300">
             출발 앞당기기 시
           </span>
-        ) : recommended ? (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/30 text-indigo-200">
-            추천
-          </span>
-        ) : (
-          <span className="text-xs text-slate-500">경로 {route.rank}</span>
         )}
         <span className="text-sm font-semibold text-slate-100">{route.totalTimeMinutes}분</span>
         <span className="text-xs text-slate-500">환승 {route.transferCount}회</span>
@@ -783,15 +832,10 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [followup, setFollowup] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [workflowOpen, setWorkflowOpen] = useState(false);
+  const [workflowData, setWorkflowData] = useState(null);
   const [liveWorkflow, setLiveWorkflow] = useState([]);
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   const bottomRef = useRef(null);
-
-  const lastAssistant = useMemo(
-    () => [...messages].reverse().find((m) => m.role === "assistant"),
-    [messages]
-  );
 
   useEffect(() => {
     if (bottomRef.current) {
@@ -805,7 +849,7 @@ export default function App() {
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setIsLoading(true);
     setLiveWorkflow([]);
-    setWorkflowOpen(false);
+    setWorkflowData(null);
 
     try {
       const result = await runAgent(text, history, (step) => {
@@ -838,7 +882,7 @@ export default function App() {
   const handleReset = () => {
     setMessages([]);
     setFollowup("");
-    setWorkflowOpen(false);
+    setWorkflowData(null);
     setSessionId(crypto.randomUUID());
   };
 
@@ -854,8 +898,8 @@ export default function App() {
       `}</style>
 
       <Header
-        onToggleWorkflow={() => setWorkflowOpen((v) => !v)}
-        workflowOpen={workflowOpen}
+        onToggleWorkflow={() => setWorkflowData(null)}
+        workflowOpen={workflowData !== null}
         hasMessages={hasMessages}
         onReset={handleReset}
       />
@@ -867,7 +911,7 @@ export default function App() {
           messages={messages}
           isLoading={isLoading}
           liveWorkflow={liveWorkflow}
-          onOpenWorkflow={() => setWorkflowOpen(true)}
+          onOpenWorkflow={setWorkflowData}
           scrollRef={bottomRef}
         />
       )}
@@ -892,8 +936,8 @@ export default function App() {
         </div>
       )}
 
-      {workflowOpen && lastAssistant && (
-        <WorkflowPanel data={lastAssistant} onClose={() => setWorkflowOpen(false)} />
+      {workflowData && (
+        <WorkflowPanel data={workflowData} onClose={() => setWorkflowData(null)} />
       )}
     </div>
   );
