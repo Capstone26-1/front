@@ -1,4 +1,4 @@
-const SERVER_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
+const SERVER_URL = process.env.REACT_APP_API_URL !== undefined ? process.env.REACT_APP_API_URL : "http://localhost:3001";
 
 export async function runAgent(userMessage, history, onStep, sessionId) {
   const response = await fetch(`${SERVER_URL}/api/agent`, {
